@@ -1,0 +1,19 @@
+{
+  "name": "limperiam-auth-client",
+  "version": "0.1.0",
+  "description": "Client du service d'identite limperiam-auth : verifie un jeton de session opaque.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "license": "MIT",
+  "devDependencies": { "@types/node": "^26.4.0", "typescript": "^7.0.2" }
+}

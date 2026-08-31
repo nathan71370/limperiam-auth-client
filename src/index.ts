@@ -1,0 +1,155 @@
+/**
+ * Client du service d'identité `limperiam-auth`.
+ *
+ * Ce paquet ne dépend PAS de Next : il reçoit un jeton, pas une requête. Lire
+ * le cookie tient en une ligne côté application (`cookies().get(...)`) ; le
+ * faire ici y ferait entrer `next/headers` en dépendance de pair pour masquer
+ * un appel trivial, et rendrait le module intestable sans état de requête.
+ *
+ * Il ne met RIEN en cache. Le jeton de session est opaque et vérifié en base à
+ * chaque appel, précisément pour que désactiver un compte le déconnecte
+ * immédiatement partout. Un cache, même court, rendrait cette propriété fausse
+ * pendant sa durée.
+ */
+
+export type SessionPayload = {
+  userId: number;
+  email: string;
+  pseudo: string;
+  isAdmin: boolean;
+  groups: string[];
+  apps: string[];
+};
+
+export type GroupRow = { slug: string; name: string };
+
+/**
+ * Le service d'identité n'a pas pu répondre. À distinguer absolument de
+ * « pas de session » : la première situation doit produire une erreur visible
+ * (503), la seconde une redirection vers la connexion. Les confondre enverrait
+ * tout le monde vers une page de login servie par un service en panne.
+ */
+export class AuthUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super("Service d'identité injoignable");
+    this.name = 'AuthUnavailableError';
+    this.cause = cause;
+  }
+}
+
+export const SESSION_COOKIE = 'lim_session';
+
+const DEFAULT_TIMEOUT_MS = 3000;
+
+function internalUrl(override?: string): string {
+  const url = override ?? process.env.AUTH_INTERNAL_URL;
+  if (!url) {
+    throw new Error(
+      "AUTH_INTERNAL_URL n'est pas définie : impossible de vérifier une session.",
+    );
+  }
+  return url.replace(/\/+$/, '');
+}
+
+function publicBase(override?: string): string {
+  const url = override ?? process.env.AUTH_PUBLIC_URL;
+  if (!url) {
+    throw new Error(
+      "AUTH_PUBLIC_URL n'est pas définie : impossible de construire l'URL de connexion.",
+    );
+  }
+  return url.replace(/\/+$/, '');
+}
+
+/**
+ * `base` est résolue par l'APPELANT, avant son `try`. Une variable
+ * d'environnement manquante est une erreur de configuration, pas une panne du
+ * service : la laisser tomber dans le `catch` qui fabrique
+ * `AuthUnavailableError` masquerait « tu as oublié AUTH_INTERNAL_URL » derrière
+ * « service injoignable », et enverrait chercher un conteneur en bonne santé.
+ */
+async function callAuth(
+  base: string,
+  path: string,
+  token: string,
+  timeoutMs?: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  // Sans délai d'attente, une panne réseau silencieuse (paquets avalés plutôt
+  // que refusés) suspendrait le rendu de la page jusqu'au timeout par défaut
+  // de l'agent HTTP, qui se compte en minutes.
+  const timer = setTimeout(() => controller.abort(), timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  try {
+    return await fetch(`${base}${path}`, {
+      headers: { cookie: `${SESSION_COOKIE}=${token}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Vérifie un jeton auprès du service d'identité.
+ *
+ * - `null` renvoyé = pas de session valide (jeton absent, périmé, révoqué).
+ * - `AuthUnavailableError` levée = on ne sait pas. L'appelant échoue fermé.
+ */
+export async function fetchSession(
+  token: string | null | undefined,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<SessionPayload | null> {
+  // Pas de jeton = pas de session, sans aller déranger le service : une page
+  // publique visitée par un inconnu ne doit pas produire d'appel réseau.
+  if (!token) return null;
+
+  // Hors du try : voir le commentaire de `callAuth`.
+  const base = internalUrl(opts?.authUrl);
+
+  let res: Response;
+  try {
+    res = await callAuth(base, '/api/session', token, opts?.timeoutMs);
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  if (res.status === 401) return null;
+  if (!res.ok) throw new AuthUnavailableError(new Error(`HTTP ${res.status}`));
+
+  try {
+    return (await res.json()) as SessionPayload;
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+}
+
+/**
+ * Liste des groupes. Renvoie un tableau vide plutôt que de lever quand la
+ * session est refusée : cette liste ne sert qu'à peupler une UI, son absence
+ * ne doit jamais empêcher une page de s'afficher.
+ */
+export async function fetchGroups(
+  token: string | null | undefined,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<GroupRow[]> {
+  if (!token) return [];
+  const res = await callAuth(internalUrl(opts?.authUrl), '/api/groups', token, opts?.timeoutMs);
+  if (!res.ok) return [];
+  const body = (await res.json()) as { groups?: GroupRow[] };
+  return body.groups ?? [];
+}
+
+/** URL de la page de connexion, avec la destination de retour. */
+export function loginUrl(next: string, publicUrl?: string): string {
+  return `${publicBase(publicUrl)}/login?next=${encodeURIComponent(next)}`;
+}
+
+/**
+ * Cible du formulaire de déconnexion. À utiliser en **POST** : la route refuse
+ * volontairement le GET, pour qu'une balise `<img>` sur un site tiers ne
+ * déconnecte pas de toutes les applications du domaine.
+ */
+export function logoutUrl(publicUrl?: string): string {
+  return `${publicBase(publicUrl)}/logout`;
+}
