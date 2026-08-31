@@ -77,6 +77,11 @@ test('fetchGroups renvoie la liste, tableau vide sans session', async () => {
   assert.deepEqual(await fetchGroups('perime'), []);
 });
 
+test('fetchGroups renvoie un tableau vide sur panne réseau, sans lever', async () => {
+  globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
+  assert.deepEqual(await fetchGroups('jeton'), []);
+});
+
 test('loginUrl encode la destination, logoutUrl pointe la bonne route', () => {
   assert.equal(
     loginUrl('https://dashboard.limperiam.com/?q=a b'),

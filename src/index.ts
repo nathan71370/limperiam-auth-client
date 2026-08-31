@@ -125,16 +125,32 @@ export async function fetchSession(
 }
 
 /**
- * Liste des groupes. Renvoie un tableau vide plutôt que de lever quand la
- * session est refusée : cette liste ne sert qu'à peupler une UI, son absence
- * ne doit jamais empêcher une page de s'afficher.
+ * Liste des groupes. Renvoie un tableau vide plutôt que de lever, que ce
+ * soit parce que la session est refusée ou parce que `callAuth` échoue (panne
+ * réseau, service muet) : cette liste ne sert qu'à peupler une UI, son
+ * absence ne doit jamais empêcher une page de s'afficher. Contrairement à
+ * `fetchSession`, on ne distingue pas ici « pas de session » de « service
+ * injoignable » — ce n'est pas dangereux, car une liste de groupes vide ne
+ * fait que vider des cases à cocher : elle n'accorde et ne retire aucun
+ * accès. C'est `fetchSession` qui garde cette distinction stricte, parce que
+ * c'est elle qui décide qui entre.
  */
 export async function fetchGroups(
   token: string | null | undefined,
   opts?: { authUrl?: string; timeoutMs?: number },
 ): Promise<GroupRow[]> {
   if (!token) return [];
-  const res = await callAuth(internalUrl(opts?.authUrl), '/api/groups', token, opts?.timeoutMs);
+  // internalUrl() est résolue hors du try, comme dans fetchSession : une
+  // variable d'environnement manquante est une erreur de configuration, pas
+  // une panne réseau, et ne doit pas se retrouver avalée par le catch
+  // ci-dessous.
+  const base = internalUrl(opts?.authUrl);
+  let res: Response;
+  try {
+    res = await callAuth(base, '/api/groups', token, opts?.timeoutMs);
+  } catch {
+    return [];
+  }
   if (!res.ok) return [];
   const body = (await res.json()) as { groups?: GroupRow[] };
   return body.groups ?? [];
