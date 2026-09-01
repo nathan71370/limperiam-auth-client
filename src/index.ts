@@ -152,8 +152,19 @@ export async function fetchGroups(
     return [];
   }
   if (!res.ok) return [];
-  const body = (await res.json()) as { groups?: GroupRow[] };
-  return body.groups ?? [];
+  // Le corps est décodé dans un try au même titre que l'appel réseau : une
+  // réponse 200 mal formée (page d'erreur HTML d'un proxy, corps tronqué) fait
+  // lever `res.json()`, et ce SyntaxError sortirait du contrat annoncé
+  // au-dessus. `fetchGroups` est appelée hors de tout try par ses appelants
+  // — dans `app/page.tsx` du dashboard, notamment — précisément parce qu'elle
+  // promet de ne pas lever : une liste de cases à cocher vide ne doit jamais
+  // faire échouer le rendu d'une page.
+  try {
+    const body = (await res.json()) as { groups?: GroupRow[] };
+    return body.groups ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** URL de la page de connexion, avec la destination de retour. */

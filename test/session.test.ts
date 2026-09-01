@@ -82,6 +82,15 @@ test('fetchGroups renvoie un tableau vide sur panne réseau, sans lever', async 
   assert.deepEqual(await fetchGroups('jeton'), []);
 });
 
+test('fetchGroups renvoie un tableau vide sur un corps 200 malformé, sans lever', async () => {
+  // Le JSDoc promet un tableau vide plutôt que de lever ; `fetchGroups` est
+  // appelée hors de tout try dans `app/page.tsx` du dashboard, donc un
+  // SyntaxError brut y ferait prendre un 500 sur `/` à un admin — pour une
+  // liste qui ne sert qu'à peupler des cases à cocher.
+  stubFetch(() => new Response('<html>oups</html>', { status: 200 }));
+  assert.deepEqual(await fetchGroups('jeton'), []);
+});
+
 test('loginUrl encode la destination, logoutUrl pointe la bonne route', () => {
   assert.equal(
     loginUrl('https://dashboard.limperiam.com/?q=a b'),
