@@ -167,6 +167,68 @@ export async function fetchGroups(
   }
 }
 
+export type AppRow = {
+  slug: string;
+  name: string;
+  url: string;
+  /** URL absolue, résolue depuis `AUTH_PUBLIC_URL`. `null` si l'app n'a pas d'icône. */
+  iconUrl: string | null;
+  categorySlug: string | null;
+  categoryName: string | null;
+  position: number;
+  uptimeMonitor: string | null;
+};
+
+/**
+ * Le catalogue filtré par les droits de la personne.
+ *
+ * Contrairement à `fetchGroups`, une panne du service **lève** au lieu de
+ * renvoyer un tableau vide : une liste de groupes vide ne fait que vider des
+ * cases à cocher, alors qu'une liste d'applications vide afficherait un
+ * dashboard désert, exactement comme si la personne n'avait droit à rien.
+ * Mieux vaut une page d'erreur explicite qu'un mensonge silencieux. Un 401
+ * reste un tableau vide : là, l'absence de session est une réponse, pas une
+ * panne, et l'appelant redirigera vers la connexion.
+ *
+ * C'est ici qu'`iconPath`, relatif tel que le service le stocke, devient une
+ * URL absolue : le service n'a pas à connaître sa propre adresse publique,
+ * c'est le consommateur qui sait par où il le joint.
+ */
+export async function fetchApps(
+  token: string | null | undefined,
+  opts?: { authUrl?: string; publicUrl?: string; timeoutMs?: number },
+): Promise<AppRow[]> {
+  if (!token) return [];
+
+  // Hors du try : voir le commentaire de `callAuth`. Les deux variables sont
+  // résolues avant le moindre appel réseau, pour qu'une configuration
+  // incomplète se dise comme telle plutôt qu'en « service injoignable ».
+  const base = internalUrl(opts?.authUrl);
+  const publicOrigin = publicBase(opts?.publicUrl);
+
+  let res: Response;
+  try {
+    res = await callAuth(base, '/api/apps', token, opts?.timeoutMs);
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  if (res.status === 401) return [];
+  if (!res.ok) throw new AuthUnavailableError(new Error(`HTTP ${res.status}`));
+
+  let body: { apps?: (Omit<AppRow, 'iconUrl'> & { iconPath: string | null })[] };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  return (body.apps ?? []).map(({ iconPath, ...app }) => ({
+    ...app,
+    iconUrl: iconPath ? `${publicOrigin}${iconPath}` : null,
+  }));
+}
+
 /** URL de la page de connexion, avec la destination de retour. */
 export function loginUrl(next: string, publicUrl?: string): string {
   return `${publicBase(publicUrl)}/login?next=${encodeURIComponent(next)}`;

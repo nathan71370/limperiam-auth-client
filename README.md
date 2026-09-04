@@ -32,6 +32,18 @@ type SessionPayload = {
 
 type GroupRow = { slug: string; name: string };
 
+type AppRow = {
+  slug: string;
+  name: string;
+  url: string;
+  /** URL absolue, résolue depuis AUTH_PUBLIC_URL. */
+  iconUrl: string | null;
+  categorySlug: string | null;
+  categoryName: string | null;
+  position: number;
+  uptimeMonitor: string | null;
+};
+
 class AuthUnavailableError extends Error {}
 
 const SESSION_COOKIE = 'lim_session';
@@ -45,6 +57,11 @@ function fetchGroups(
   token: string | null | undefined,
   opts?: { authUrl?: string; timeoutMs?: number },
 ): Promise<GroupRow[]>;
+
+function fetchApps(
+  token: string | null | undefined,
+  opts?: { authUrl?: string; publicUrl?: string; timeoutMs?: number },
+): Promise<AppRow[]>;
 
 function loginUrl(next: string, publicUrl?: string): string;
 
@@ -60,6 +77,20 @@ function logoutUrl(publicUrl?: string): string;
 - `fetchGroups` renvoie un tableau vide aussi bien sans jeton que sur une
   session refusée : cette liste ne sert qu'à peupler une UI, son absence ne
   doit jamais empêcher une page de s'afficher.
+- `fetchApps` renvoie le catalogue **déjà filtré par les droits** de la
+  personne — le filtrage est fait par la requête SQL du service, jamais dans
+  le navigateur. Elle renvoie un tableau vide sans jeton et sur un 401, mais
+  **lève** `AuthUnavailableError` dès que le service ne répond pas
+  correctement. Cette différence de contrat avec `fetchGroups` est délibérée :
+  une liste de groupes vide ne fait que vider des cases à cocher, alors qu'une
+  liste d'applications vide afficherait un dashboard désert, exactement comme
+  si la personne n'avait droit à rien. Mieux vaut une page d'erreur explicite
+  qu'un mensonge silencieux.
+
+  C'est aussi elle qui résout `iconPath` (relatif, tel que le service le
+  stocke) en URL absolue : le service n'a pas à connaître sa propre adresse
+  publique, c'est le consommateur qui sait par où il le joint. `fetchApps` est
+  donc la seule fonction à avoir besoin des **deux** variables d'URL à la fois.
 - `loginUrl` / `logoutUrl` construisent les URL publiques de connexion et de
   déconnexion. `logoutUrl` doit être utilisée en **POST** : la route refuse
   volontairement le GET, pour qu'une balise `<img>` sur un site tiers ne
@@ -69,8 +100,8 @@ function logoutUrl(publicUrl?: string): string;
 
 | Variable            | Rôle                                                                 |
 | -------------------- | --------------------------------------------------------------------- |
-| `AUTH_INTERNAL_URL`  | Base URL par laquelle le serveur de l'application appelle `limperiam-auth` (ex. `http://limperiam-auth:3000`, résolution interne au réseau Docker). Requise par `fetchSession` et `fetchGroups`. |
-| `AUTH_PUBLIC_URL`    | Base URL publique du service, utilisée pour construire les liens de connexion/déconnexion vus par le navigateur (ex. `https://auth.limperiam.com`). Requise par `loginUrl` et `logoutUrl`. |
+| `AUTH_INTERNAL_URL`  | Base URL par laquelle le serveur de l'application appelle `limperiam-auth` (ex. `http://limperiam-auth:3000`, résolution interne au réseau Docker). Requise par `fetchSession`, `fetchGroups` et `fetchApps`. |
+| `AUTH_PUBLIC_URL`    | Base URL publique du service, utilisée pour construire les liens de connexion/déconnexion vus par le navigateur (ex. `https://auth.limperiam.com`). Requise par `loginUrl`, `logoutUrl` et `fetchApps` (résolution des URL d'icônes). |
 
 Chaque fonction accepte aussi `authUrl` / `publicUrl` en option pour
 surcharger la variable d'environnement correspondante — utile pour les tests,

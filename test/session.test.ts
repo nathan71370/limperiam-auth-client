@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchSession, fetchGroups, loginUrl, logoutUrl, AuthUnavailableError }
+import { fetchSession, fetchGroups, fetchApps, loginUrl, logoutUrl, AuthUnavailableError }
   from '../src/index.ts';
 
 const realFetch = globalThis.fetch;
@@ -97,4 +97,92 @@ test('loginUrl encode la destination, logoutUrl pointe la bonne route', () => {
     'https://auth.limperiam.com/login?next=https%3A%2F%2Fdashboard.limperiam.com%2F%3Fq%3Da%20b',
   );
   assert.equal(logoutUrl(), 'https://auth.limperiam.com/logout');
+});
+
+// --- fetchApps ----------------------------------------------------------
+
+const APP = {
+  slug: 'jellyfin',
+  name: 'Jellyfin',
+  url: 'http://nas.local:8096',
+  iconPath: '/icons/jellyfin.png',
+  categorySlug: 'media',
+  categoryName: 'Media',
+  position: 0,
+  uptimeMonitor: null,
+};
+
+test('fetchApps : sans jeton, tableau vide et aucune requête', async () => {
+  stubFetch(() => new Response('{}', { status: 200 }));
+  assert.deepEqual(await fetchApps(null), []);
+  assert.deepEqual(await fetchApps(undefined), []);
+  assert.deepEqual(await fetchApps(''), []);
+  assert.equal(calls.length, 0);
+});
+
+test('fetchApps : iconPath relatif résolu en URL absolue depuis AUTH_PUBLIC_URL', async () => {
+  // La raison d'être de cette fonction : le service stocke `/icons/x.png` et
+  // n'a pas à connaître sa propre adresse publique.
+  stubFetch(() => new Response(JSON.stringify({ apps: [APP] }), { status: 200 }));
+
+  const apps = await fetchApps('jeton');
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].iconUrl, 'https://auth.limperiam.com/icons/jellyfin.png');
+  assert.equal(apps[0].slug, 'jellyfin');
+  assert.equal(apps[0].categoryName, 'Media');
+  assert.equal((apps[0] as Record<string, unknown>).iconPath, undefined,
+    'iconPath brut ne doit pas fuir dans le type public');
+  assert.equal(calls[0].url, 'http://limperiam-auth:3000/api/apps');
+  assert.equal(
+    (calls[0].init?.headers as Record<string, string>).cookie,
+    'lim_session=jeton',
+  );
+});
+
+test('fetchApps : iconPath null donne iconUrl null', async () => {
+  stubFetch(() => new Response(JSON.stringify({ apps: [{ ...APP, iconPath: null }] }), { status: 200 }));
+  const apps = await fetchApps('jeton');
+  assert.equal(apps[0].iconUrl, null);
+});
+
+test('fetchApps : corps sans clé `apps` -> tableau vide', async () => {
+  stubFetch(() => new Response('{}', { status: 200 }));
+  assert.deepEqual(await fetchApps('jeton'), []);
+});
+
+test('fetchApps : un 401 signifie « pas de session », tableau vide', async () => {
+  stubFetch(() => new Response('{"error":"NOT_AUTHENTICATED"}', { status: 401 }));
+  assert.deepEqual(await fetchApps('jeton'), []);
+});
+
+test('fetchApps : un 500 LÈVE, contrairement à fetchGroups', async () => {
+  // Différence de contrat délibérée : une liste vide afficherait un dashboard
+  // désert, comme si la personne n'avait droit à rien.
+  stubFetch(() => new Response('boom', { status: 500 }));
+  await assert.rejects(() => fetchApps('jeton'), AuthUnavailableError);
+});
+
+test('fetchApps : réseau coupé lève AuthUnavailableError', async () => {
+  globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
+  await assert.rejects(() => fetchApps('jeton'), AuthUnavailableError);
+});
+
+test('fetchApps : corps 200 malformé lève AuthUnavailableError', async () => {
+  stubFetch(() => new Response('<html>oups</html>', { status: 200 }));
+  await assert.rejects(() => fetchApps('jeton'), AuthUnavailableError);
+});
+
+test('fetchApps : AUTH_PUBLIC_URL manquante lève une erreur qui la nomme', async () => {
+  // Hors du try, comme dans fetchSession : une erreur de configuration ne doit
+  // pas se déguiser en panne de service.
+  delete process.env.AUTH_PUBLIC_URL;
+  stubFetch(() => new Response(JSON.stringify({ apps: [APP] }), { status: 200 }));
+  await assert.rejects(() => fetchApps('jeton'), /AUTH_PUBLIC_URL/);
+});
+
+test('fetchApps : AUTH_INTERNAL_URL manquante lève une erreur qui la nomme', async () => {
+  delete process.env.AUTH_INTERNAL_URL;
+  stubFetch(() => new Response(JSON.stringify({ apps: [APP] }), { status: 200 }));
+  await assert.rejects(() => fetchApps('jeton'), /AUTH_INTERNAL_URL/);
 });
