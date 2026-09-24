@@ -73,6 +73,7 @@ async function callAuth(
   path: string,
   token: string,
   timeoutMs?: number,
+  write?: { method: 'PATCH'; body: unknown },
 ): Promise<Response> {
   const controller = new AbortController();
   // Sans délai d'attente, une panne réseau silencieuse (paquets avalés plutôt
@@ -81,7 +82,11 @@ async function callAuth(
   const timer = setTimeout(() => controller.abort(), timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
     return await fetch(`${base}${path}`, {
-      headers: { cookie: `${SESSION_COOKIE}=${token}` },
+      method: write?.method ?? 'GET',
+      headers: write
+        ? { cookie: `${SESSION_COOKIE}=${token}`, 'content-type': 'application/json' }
+        : { cookie: `${SESSION_COOKIE}=${token}` },
+      body: write ? JSON.stringify(write.body) : undefined,
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -227,6 +232,64 @@ export async function fetchApps(
     ...app,
     iconUrl: iconPath ? `${publicOrigin}${iconPath}` : null,
   }));
+}
+
+export type PseudoUpdate = { ok: true; pseudo: string } | { ok: false; error: string };
+
+/**
+ * Change le pseudo de la personne à qui appartient le jeton — la sienne
+ * seulement, le service tire l'identité de la session.
+ *
+ * À appeler depuis le SERVEUR d'une application : la requête part sans
+ * en-tête `Origin`, ce que la route accepte précisément pour ce cas (voir
+ * `assertNoForeignOrigin` côté service).
+ *
+ * Deux familles de réponses, à ne pas confondre :
+ * - `{ ok: false, error }` : un refus à montrer tel quel — pseudo invalide ou
+ *   déjà pris (le message vient du service, en français), ou
+ *   `NOT_AUTHENTICATED` si la session n'est plus valide ;
+ * - `AuthUnavailableError` levée : le service n'a pas répondu correctement,
+ *   on ne sait pas si le changement a eu lieu.
+ */
+export async function updatePseudo(
+  token: string | null | undefined,
+  pseudo: string,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<PseudoUpdate> {
+  if (!token) return { ok: false, error: 'NOT_AUTHENTICATED' };
+
+  // Hors du try : voir le commentaire de `callAuth`.
+  const base = internalUrl(opts?.authUrl);
+
+  let res: Response;
+  try {
+    res = await callAuth(base, '/api/me/pseudo', token, opts?.timeoutMs, {
+      method: 'PATCH',
+      body: { pseudo },
+    });
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  if (res.status === 401) return { ok: false, error: 'NOT_AUTHENTICATED' };
+  if (res.status !== 200 && res.status !== 422) {
+    throw new AuthUnavailableError(new Error(`HTTP ${res.status}`));
+  }
+
+  let body: { pseudo?: unknown; error?: unknown };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  if (res.status === 422) {
+    return { ok: false, error: typeof body.error === 'string' ? body.error : 'Pseudo refusé.' };
+  }
+  if (typeof body.pseudo !== 'string') {
+    throw new AuthUnavailableError(new Error('Réponse sans pseudo'));
+  }
+  return { ok: true, pseudo: body.pseudo };
 }
 
 /** URL de la page de connexion, avec la destination de retour. */

@@ -63,6 +63,14 @@ function fetchApps(
   opts?: { authUrl?: string; publicUrl?: string; timeoutMs?: number },
 ): Promise<AppRow[]>;
 
+type PseudoUpdate = { ok: true; pseudo: string } | { ok: false; error: string };
+
+function updatePseudo(
+  token: string | null | undefined,
+  pseudo: string,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<PseudoUpdate>;
+
 function loginUrl(next: string, publicUrl?: string): string;
 
 function logoutUrl(publicUrl?: string): string;
@@ -91,6 +99,15 @@ function logoutUrl(publicUrl?: string): string;
   stocke) en URL absolue : le service n'a pas à connaître sa propre adresse
   publique, c'est le consommateur qui sait par où il le joint. `fetchApps` est
   donc la seule fonction à avoir besoin des **deux** variables d'URL à la fois.
+- `updatePseudo` change le pseudo de la personne à qui appartient le jeton —
+  la sienne seulement. À appeler depuis le **serveur** de l'application : la
+  requête part sans en-tête `Origin`, ce que le service accepte précisément
+  pour ce cas (un navigateur, lui, pose toujours `Origin`, donc ce n'est pas
+  une ouverture au CSRF). `{ ok: false, error }` est un refus à afficher tel
+  quel — pseudo invalide ou déjà pris, message en français venu du service —
+  ou `NOT_AUTHENTICATED` ; `AuthUnavailableError` est levée quand le service
+  n'a pas répondu correctement, et qu'on ne sait donc pas si le changement a
+  eu lieu.
 - `loginUrl` / `logoutUrl` construisent les URL publiques de connexion et de
   déconnexion. `logoutUrl` doit être utilisée en **POST** : la route refuse
   volontairement le GET, pour qu'une balise `<img>` sur un site tiers ne
@@ -100,7 +117,7 @@ function logoutUrl(publicUrl?: string): string;
 
 | Variable            | Rôle                                                                 |
 | -------------------- | --------------------------------------------------------------------- |
-| `AUTH_INTERNAL_URL`  | Base URL par laquelle le serveur de l'application appelle `limperiam-auth` (ex. `http://limperiam-auth:3000`, résolution interne au réseau Docker). Requise par `fetchSession`, `fetchGroups` et `fetchApps`. |
+| `AUTH_INTERNAL_URL`  | Base URL par laquelle le serveur de l'application appelle `limperiam-auth` (ex. `http://limperiam-auth:3000`, résolution interne au réseau Docker). Requise par `fetchSession`, `fetchGroups`, `fetchApps` et `updatePseudo`. |
 | `AUTH_PUBLIC_URL`    | Base URL publique du service, utilisée pour construire les liens de connexion/déconnexion vus par le navigateur (ex. `https://auth.limperiam.com`). Requise par `loginUrl`, `logoutUrl` et `fetchApps` (résolution des URL d'icônes). |
 
 Chaque fonction accepte aussi `authUrl` / `publicUrl` en option pour

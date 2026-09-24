@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchSession, fetchGroups, fetchApps, loginUrl, logoutUrl, AuthUnavailableError }
+import { fetchSession, fetchGroups, fetchApps, updatePseudo, loginUrl, logoutUrl, AuthUnavailableError }
   from '../src/index.ts';
 
 const realFetch = globalThis.fetch;
@@ -185,4 +185,60 @@ test('fetchApps : AUTH_INTERNAL_URL manquante lève une erreur qui la nomme', as
   delete process.env.AUTH_INTERNAL_URL;
   stubFetch(() => new Response(JSON.stringify({ apps: [APP] }), { status: 200 }));
   await assert.rejects(() => fetchApps('jeton'), /AUTH_INTERNAL_URL/);
+});
+
+// --- updatePseudo ---------------------------------------------------------
+
+test('updatePseudo : sans jeton, refus sans aucune requête', async () => {
+  stubFetch(() => new Response('{}', { status: 200 }));
+  assert.deepEqual(await updatePseudo(null, 'Nath'), { ok: false, error: 'NOT_AUTHENTICATED' });
+  assert.equal(calls.length, 0);
+});
+
+test('updatePseudo : PATCH JSON avec le cookie, sans Origin, et renvoie le pseudo normalisé', async () => {
+  stubFetch(() => new Response(JSON.stringify({ pseudo: 'Nath' }), { status: 200 }));
+
+  assert.deepEqual(await updatePseudo('jeton', '  Nath  '), { ok: true, pseudo: 'Nath' });
+
+  assert.equal(calls[0].url, 'http://limperiam-auth:3000/api/me/pseudo');
+  assert.equal(calls[0].init?.method, 'PATCH');
+  const headers = calls[0].init?.headers as Record<string, string>;
+  assert.equal(headers.cookie, 'lim_session=jeton');
+  assert.equal(headers['content-type'], 'application/json');
+  // Sans Origin : c'est ce qui fait accepter l'appel de serveur à serveur.
+  assert.equal(headers.origin, undefined);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { pseudo: '  Nath  ' });
+});
+
+test('updatePseudo : un 422 rend le message du service, à afficher tel quel', async () => {
+  stubFetch(() => new Response(JSON.stringify({ error: 'Ce pseudo est déjà pris.' }), { status: 422 }));
+  assert.deepEqual(await updatePseudo('jeton', 'Pris'), { ok: false, error: 'Ce pseudo est déjà pris.' });
+});
+
+test('updatePseudo : un 401 dit « plus connecté », ce n\'est pas une panne', async () => {
+  stubFetch(() => new Response('{"error":"NOT_AUTHENTICATED"}', { status: 401 }));
+  assert.deepEqual(await updatePseudo('jeton', 'Nath'), { ok: false, error: 'NOT_AUTHENTICATED' });
+});
+
+test('updatePseudo : 500, réseau coupé ou corps illisible lèvent AuthUnavailableError', async () => {
+  stubFetch(() => new Response('boom', { status: 500 }));
+  await assert.rejects(() => updatePseudo('jeton', 'Nath'), AuthUnavailableError);
+
+  globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
+  await assert.rejects(() => updatePseudo('jeton', 'Nath'), AuthUnavailableError);
+
+  stubFetch(() => new Response('<html>', { status: 200 }));
+  await assert.rejects(() => updatePseudo('jeton', 'Nath'), AuthUnavailableError);
+});
+
+test('updatePseudo : AUTH_INTERNAL_URL manquante lève une erreur qui la nomme', async () => {
+  delete process.env.AUTH_INTERNAL_URL;
+  await assert.rejects(() => updatePseudo('jeton', 'Nath'), /AUTH_INTERNAL_URL/);
+});
+
+test('les lectures restent en GET, sans corps', async () => {
+  stubFetch(() => new Response('{"groups":[]}', { status: 200 }));
+  await fetchGroups('jeton');
+  assert.equal(calls[0].init?.method, 'GET');
+  assert.equal(calls[0].init?.body, undefined);
 });
