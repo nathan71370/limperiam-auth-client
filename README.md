@@ -32,6 +32,8 @@ type SessionPayload = {
 
 type GroupRow = { slug: string; name: string };
 
+type Member = { userId: number; pseudo: string };
+
 type AppRow = {
   slug: string;
   name: string;
@@ -57,6 +59,12 @@ function fetchGroups(
   token: string | null | undefined,
   opts?: { authUrl?: string; timeoutMs?: number },
 ): Promise<GroupRow[]>;
+
+function fetchMembers(
+  token: string | null | undefined,
+  app: string,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<Member[]>;
 
 function fetchApps(
   token: string | null | undefined,
@@ -85,6 +93,10 @@ function logoutUrl(publicUrl?: string): string;
 - `fetchGroups` renvoie un tableau vide aussi bien sans jeton que sur une
   session refusée : cette liste ne sert qu'à peupler une UI, son absence ne
   doit jamais empêcher une page de s'afficher.
+- `fetchMembers` renvoie les membres de l'application `app` : `[{ userId, pseudo }]`, jamais d'email
+  (route `GET /api/members` de limperiam-auth). Renvoie `[]` sans jeton ou sur
+  401/403 ; lève `AuthUnavailableError` si le service est injoignable ou répond
+  mal — à l'appelant de se rabattre sur sa copie locale.
 - `fetchApps` renvoie le catalogue **déjà filtré par les droits** de la
   personne — le filtrage est fait par la requête SQL du service, jamais dans
   le navigateur. Elle renvoie un tableau vide sans jeton et sur un 401, mais

@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchSession, fetchGroups, fetchApps, updatePseudo, loginUrl, logoutUrl, AuthUnavailableError }
+import { fetchSession, fetchGroups, fetchApps, fetchMembers, updatePseudo, loginUrl, logoutUrl, AuthUnavailableError }
   from '../src/index.ts';
 
 const realFetch = globalThis.fetch;
@@ -241,4 +241,40 @@ test('les lectures restent en GET, sans corps', async () => {
   await fetchGroups('jeton');
   assert.equal(calls[0].init?.method, 'GET');
   assert.equal(calls[0].init?.body, undefined);
+});
+
+// --- fetchMembers ---------------------------------------------------------
+
+test('fetchMembers renvoie les membres et interroge la bonne app', async () => {
+  stubFetch(() => new Response('{"members":[{"userId":1,"pseudo":"Alice"}]}', { status: 200 }));
+  assert.deepEqual(await fetchMembers('jeton', 'potorankerr'), [{ userId: 1, pseudo: 'Alice' }]);
+  assert.equal(calls[0].url, 'http://limperiam-auth:3000/api/members?app=potorankerr');
+  assert.equal(
+    (calls[0].init?.headers as Record<string, string>).cookie,
+    'lim_session=jeton',
+  );
+});
+
+test('fetchMembers sans jeton : tableau vide, aucune requête', async () => {
+  stubFetch(() => new Response('{}', { status: 200 }));
+  assert.deepEqual(await fetchMembers(null, 'potorankerr'), []);
+  assert.equal(calls.length, 0);
+});
+
+test('fetchMembers sur 401 ou 403 : tableau vide', async () => {
+  stubFetch(() => new Response('{}', { status: 401 }));
+  assert.deepEqual(await fetchMembers('perime', 'potorankerr'), []);
+  stubFetch(() => new Response('{}', { status: 403 }));
+  assert.deepEqual(await fetchMembers('jeton', 'potorankerr'), []);
+});
+
+test('fetchMembers lève AuthUnavailableError sur 500, réseau coupé ou corps invalide', async () => {
+  stubFetch(() => new Response('boom', { status: 500 }));
+  await assert.rejects(() => fetchMembers('jeton', 'potorankerr'), AuthUnavailableError);
+  globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
+  await assert.rejects(() => fetchMembers('jeton', 'potorankerr'), AuthUnavailableError);
+  stubFetch(() => new Response('<html>oups</html>', { status: 200 }));
+  await assert.rejects(() => fetchMembers('jeton', 'potorankerr'), AuthUnavailableError);
+  stubFetch(() => new Response('{}', { status: 200 }));
+  await assert.rejects(() => fetchMembers('jeton', 'potorankerr'), AuthUnavailableError);
 });

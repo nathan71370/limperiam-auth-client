@@ -172,6 +172,47 @@ export async function fetchGroups(
   }
 }
 
+export type Member = { userId: number; pseudo: string };
+
+/**
+ * Membres d'une application (sans email), pour les applications dont les
+ * joueurs sont les membres eux-mêmes.
+ *
+ * - `[]` sans jeton, ou si la session est refusée (401) ou n'a pas accès à
+ *   l'application (403) : il n'y a rien à montrer à cette personne.
+ * - `AuthUnavailableError` levée si le service ne répond pas ou répond mal :
+ *   contrairement à `fetchGroups`, une liste vide ici n'est pas anodine
+ *   (elle ferait disparaître tous les joueurs), l'appelant doit pouvoir se
+ *   rabattre sur sa propre copie.
+ */
+export async function fetchMembers(
+  token: string | null | undefined,
+  app: string,
+  opts?: { authUrl?: string; timeoutMs?: number },
+): Promise<Member[]> {
+  if (!token) return [];
+  // Hors du try : voir le commentaire de `callAuth`.
+  const base = internalUrl(opts?.authUrl);
+
+  let res: Response;
+  try {
+    res = await callAuth(base, `/api/members?app=${encodeURIComponent(app)}`, token, opts?.timeoutMs);
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+
+  if (res.status === 401 || res.status === 403) return [];
+  if (!res.ok) throw new AuthUnavailableError(new Error(`HTTP ${res.status}`));
+
+  try {
+    const body = (await res.json()) as { members?: unknown };
+    if (!Array.isArray(body.members)) throw new Error('champ `members` absent');
+    return body.members as Member[];
+  } catch (err) {
+    throw new AuthUnavailableError(err);
+  }
+}
+
 export type AppRow = {
   slug: string;
   name: string;
